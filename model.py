@@ -153,14 +153,20 @@ class Model(object):
             # C = tf.tile(tf.expand_dims(c,2),[1,1,self.q_maxlen,1])
             # Q = tf.tile(tf.expand_dims(q,1),[1,self.c_maxlen,1,1])
             # S = trilinear([C, Q, C*Q], input_keep_prob = 1.0 - self.dropout)
+            # S_size = [batch, n_c, n_q], q_size = [batch, n_q, emb_size], c_size = [batch, n_c, emb_size]
             S = optimized_trilinear_for_attention([c, q], self.c_maxlen, self.q_maxlen,
                                                   input_keep_prob=1.0 - self.dropout)
             mask_q = tf.expand_dims(self.q_mask, 1)
-            S_ = tf.nn.softmax(mask_logits(S, mask=mask_q))
+            # n_q方向进行softmax
+            S_ = tf.nn.softmax(mask_logits(S, mask=mask_q), dim=-1)
             mask_c = tf.expand_dims(self.c_mask, 2)
+            # n_c方向进行softmax
             S_T = tf.transpose(tf.nn.softmax(mask_logits(S, mask=mask_c), dim=1), (0, 2, 1))
+            # c2q_size = [batch, nc_, emb_size]
             self.c2q = tf.matmul(S_, q)
+            # q2c_size = [batch, nc_, emb_size]
             self.q2c = tf.matmul(tf.matmul(S_, S_T), c)
+            # attention_size = [4, batch, nc_, emb_size]
             attention_outputs = [c, self.c2q, c * self.c2q, c * self.q2c]
 
         # Stacked Model Encoder Blocks实现：共7个encoder block，每个2个卷积层，卷积核数d=96
