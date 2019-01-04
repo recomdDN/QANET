@@ -74,14 +74,28 @@ def layer_norm(x, filters=None, epsilon=1e-6, scope=None, reuse=None):
 norm_fn = layer_norm  # tf.contrib.layers.layer_norm #tf.contrib.layers.layer_norm or noam_norm
 
 
-# conv1(x) * sigmoid(conv2(x)) + x * (1 - sigmoid(conv2(x)))
 def highway(x, size=None, activation=None,
             num_layers=2, scope="highway", dropout=0.0, reuse=None):
+    """
+    conv-highway网络，使用卷积核大小为1（不改变输入张量的width）的卷积实现了highway网络
+    :param x: 输入张量，shape=[batches, lengths, channels]
+    :param size: 输出通道数
+    :param activation: 激活函数
+    :param num_layers: highway网络的层数
+    :param scope: 命名空间名
+    :param dropout: dropout比例
+    :param reuse: 是否参数重用
+    :return: 输出张量，shape=[batches, lengths, size]
+    """
     with tf.variable_scope(scope, reuse):
+        # 如果没指定输出通道数，那么输入通道数与输出通道数相等
         if size is None:
             size = x.shape.as_list()[-1]
+        # 如果有指定输出通道数，那么先对输入通道进行压缩，压缩到输出通道数相同，
+        # 否则x * (1 - sigmoid(conv2(x)))由于通道数不同而无法计算
         else:
-            x = conv(x, size, name="input_projection", reuse=reuse)
+            x = conv(x, size, name="input_projection", reuse=reuse, kernel_size=1)
+        # conv1(x) * sigmoid(conv2(x)) + x * (1 - sigmoid(conv2(x)))
         for i in range(num_layers):
             T = conv(x, size, bias=True, activation=tf.sigmoid,
                      name="gate_%d" % i, reuse=reuse)
@@ -103,7 +117,7 @@ def residual_block(inputs, num_blocks, num_conv_layers, kernel_size, mask=None,
                    reuse=None, bias=True, dropout=0.0):
     with tf.variable_scope(scope, reuse=reuse):
         if input_projection:
-            inputs = conv(inputs, num_filters, name="input_projection", reuse=reuse)
+            inputs = conv(inputs, num_filters, name="input_projection", reuse=reuse, kernel_size=1)
         outputs = inputs
         sublayer = 1
         total_sublayers = (num_conv_layers + 2) * num_blocks
@@ -165,8 +179,8 @@ def self_attention_block(inputs, num_filters, seq_len, mask=None, num_heads=8,
         outputs = norm_fn(residual, scope="layer_norm_2", reuse=reuse)
         outputs = tf.nn.dropout(outputs, 1.0 - dropout)
         #
-        outputs = conv(outputs, num_filters, True, tf.nn.relu, name="FFN_1", reuse=reuse)
-        outputs = conv(outputs, num_filters, True, None, name="FFN_2", reuse=reuse)
+        outputs = conv(outputs, num_filters, True, tf.nn.relu, name="FFN_1", reuse=reuse, kernel_size=1)
+        outputs = conv(outputs, num_filters, True, None, name="FFN_2", reuse=reuse, kernel_size=1)
         outputs = layer_dropout(outputs, residual, dropout * float(l) / L)
         l += 1
         return outputs, l
@@ -186,8 +200,8 @@ def multihead_attention(queries, units, num_heads,
         if memory is None:
             memory = queries
 
-        memory = conv(memory, 2 * units, name="memory_projection", reuse=reuse)
-        query = conv(queries, units, name="query_projection", reuse=reuse)
+        memory = conv(memory, 2 * units, name="memory_projection", reuse=reuse, kernel_size=1)
+        query = conv(queries, units, name="query_projection", reuse=reuse, kernel_size=1)
         # Q,K,V size = [batch, heads, length_q, depth_k]
         Q = split_last_dimension(query, num_heads)
         K, V = [split_last_dimension(tensor, num_heads) for tensor in tf.split(memory, 2, axis=2)]
@@ -205,6 +219,19 @@ def multihead_attention(queries, units, num_heads,
 
 # 卷积模块
 def conv(inputs, output_size, bias=None, activation=None, kernel_size=1, name="conv", reuse=None):
+    """
+    卷积运算，默认卷积核大小为1，卷积只改变in_channels，不改变新in_widths
+    :param inputs: 输入张量，shape可以为[batch, 1, in_width, in_channels]
+                ，也可以为[batch, in_width, in_channels]
+    :param output_size: int，输出通道数
+    :param bias: bool，是否使用偏置
+    :param activation: 激活函数
+    :param kernel_size: int，卷积核大小
+    :param name: string，命名空间
+    :param reuse: bool，是否复用参数
+    :return: 输出张量，对应shape为[batch, 1, in_width-kernel_size+1, output_size]
+            或者[batch, in_width-kernel_size+1, output_size]
+    """
     with tf.variable_scope(name, reuse=reuse):
         shapes = inputs.shape.as_list()
 
@@ -253,9 +280,21 @@ def mask_logits(inputs, mask, mask_value=-1e30):
     return inputs + mask_value * (1 - mask)
 
 # 深宽分离卷积 # [filter_height, filter_width, in_channels, out_channels]
+# 卷积方法为same，即不改变输入形状，只改变通道数
 def depthwise_separable_convolution(inputs, kernel_size, num_filters,
                                     scope="depthwise_separable_convolution",
                                     bias=True, is_training=True, reuse=None):
+    """
+    深度和宽度分离卷积，默认是用same卷积，输出不改变in_width，只改变in_channels
+    :param inputs: 输入张量，shape=[batch, in_width, in_channels]
+    :param kernel_size: int，卷积和大小
+    :param num_filters: int，输出通道数
+    :param scope: string，命名空间名
+    :param bias: bool，是否要偏置
+    :param is_training: bool，参数是否能训练
+    :param reuse: bool，参数是否复用
+    :return: 输出张量，shape=[batch, in_width, num_filters]
+    """
     with tf.variable_scope(scope, reuse=reuse):
         shapes = inputs.shape.as_list()
         # [filter_height, filter_width, in_channels, channel_multiplier]

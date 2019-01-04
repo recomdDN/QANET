@@ -101,11 +101,12 @@ class Model(object):
             qh_emb = tf.nn.dropout(qh_emb, 1.0 - 0.5 * self.dropout)
 
             # 2、将单词对应的word2vec矩阵通过conv编码成向量
+            # 卷积
             ch_emb = conv(ch_emb, d,
                           bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=None)
             qh_emb = conv(qh_emb, d,
                           bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=True)
-
+            # max_time_pooling
             ch_emb = tf.reduce_max(ch_emb, axis=1)
             qh_emb = tf.reduce_max(qh_emb, axis=1)
 
@@ -115,8 +116,10 @@ class Model(object):
             # 词嵌入：从glove获取
             c_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.c), 1.0 - self.dropout)
             q_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.q), 1.0 - self.dropout)
-            # 拼接词向量和字符向量
+            # 拼接词向量和字符向量　
+            # c_emb_size = [batch, n_c, c_emb+ch_emb]
             c_emb = tf.concat([c_emb, ch_emb], axis=2)
+            # q_emb_size = [batch, n_q, c_emb + ch_emb]
             q_emb = tf.concat([q_emb, qh_emb], axis=2)
             # 分别通过highway网络
             c_emb = highway(c_emb, size=d, scope="highway", dropout=self.dropout, reuse=None)
@@ -171,8 +174,10 @@ class Model(object):
 
         # Stacked Model Encoder Blocks实现：共7个encoder block，每个2个卷积层，卷积核数d=96
         with tf.variable_scope("Model_Encoder_Layer"):
+            # c, self.c2q, c * self.c2q, c * self.q2c 按照通道维度进行合并
             inputs = tf.concat(attention_outputs, axis=-1)
             self.enc = [conv(inputs, d, name="input_projection")]
+            # 3个Stacked Model Encoder Blocks
             for i in range(3):
                 if i % 2 == 0:  # 每两层进行一次dropout
                     self.enc[i] = tf.nn.dropout(self.enc[i], 1.0 - self.dropout)
@@ -187,16 +192,19 @@ class Model(object):
                                    seq_len=self.c_len,
                                    scope="Model_Encoder",
                                    bias=False,
-                                   reuse=True if i > 0 else None,  # 3个block共享同一个block的参数
+                                   reuse=True if i > 0 else None,  # 共享同一个Stacked Model Encoder Blocks的权重
                                    dropout=self.dropout)
                 )
 
         # 输出层实现：
         with tf.variable_scope("Output_Layer"):
+            # 合并Stacked Model Encoder Blocks的第一个和第二个输出，并和并通道
             start_logits = tf.squeeze(
                 conv(tf.concat([self.enc[1], self.enc[2]], axis=-1), 1, bias=False, name="start_pointer"), -1)
+            # 合并Stacked Model Encoder Blocks的第一个和第三个输出，并和并通道
             end_logits = tf.squeeze(
                 conv(tf.concat([self.enc[1], self.enc[3]], axis=-1), 1, bias=False, name="end_pointer"), -1)
+
             self.logits = [mask_logits(start_logits, mask=self.c_mask),
                            mask_logits(end_logits, mask=self.c_mask)]
 
@@ -213,6 +221,7 @@ class Model(object):
                 logits=logits2, labels=self.y2)
             self.loss = tf.reduce_mean(losses + losses2)
 
+        # L2正则化
         if config.l2_norm is not None:
             variables = tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES)
             l2_loss = tf.contrib.layers.apply_regularization(regularizer, variables)
