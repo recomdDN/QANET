@@ -327,11 +327,9 @@ def depthwise_separable_convolution(inputs, kernel_size, num_filters,
 def split_last_dimension(x, n):
     """Reshape x so that the last dimension becomes two dimensions.
     The first of these two dimensions is n.
-    Args:
-    x: a Tensor with shape [..., m]
-    n: an integer.
-    Returns:
-    a Tensor with shape [..., n, m/n]
+    :param x: a Tensor with shape [..., m]
+    :param n: int
+    :return: a Tensor with shape [..., n, m/n]
     """
     old_shape = x.get_shape().dims
     last = old_shape[-1]
@@ -352,15 +350,17 @@ def dot_product_attention(q,
                           reuse=None,
                           dropout=0.0):
     """dot-product attention.
-    Args:
-    q: a Tensor with shape [batch, heads, length_q, depth_k]
-    k: a Tensor with shape [batch, heads, length_kv, depth_k]
-    v: a Tensor with shape [batch, heads, length_kv, depth_v]
-    bias: bias Tensor (see attention_bias())
-    is_training: a bool of training
-    scope: an optional string
-    Returns:
-    A Tensor.
+    :param q: a Tensor with shape [batch, heads, length_q, depth_k]
+    :param k: a Tensor with shape [batch, heads, length_kv, depth_k]
+    :param v: a Tensor with shape [batch, heads, length_kv, depth_v]
+    :param bias: 是否添加偏置
+    :param seq_len: 序列的长度
+    :param mask:
+    :param is_training: bool，参数是否可训练
+    :param scope: 命名空间名
+    :param reuse: 参数是否复用
+    :param dropout: dropout比例
+    :return:
     """
     with tf.variable_scope(scope, default_name="dot_product_attention", reuse=reuse):
         # [batch, num_heads, query_length, memory_length]
@@ -382,11 +382,9 @@ def dot_product_attention(q,
 
 # 拼接最后两个维度
 def combine_last_two_dimensions(x):
-    """Reshape x so that the last two dimension become one.
-    Args:
-    x: a Tensor with shape [..., a, b]
-    Returns:
-    a Tensor with shape [..., ab]
+    """合并输入张量x的维度，使得最后两个维度合并为一个维度
+    :param x: 输入张量x，shape = [..., a, b]
+    :return:  输出张量，shape = [..., ab]
     """
     old_shape = x.get_shape().dims
     a, b = old_shape[-2:]
@@ -434,14 +432,11 @@ def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e
     对于不同时间尺度的数值为通道数/2。
     对于每个时间尺度，我们生成两个正弦信号(timestep/timescale)和cos(timestep/timescale)。
     并且这些正弦信号在通道维度进行拼接。
-    Args:
-    length: scalar, length of timing signal sequence.
-    channels: scalar, size of timing embeddings to create. The number of
-        different timescales is equal to channels / 2.
-    min_timescale: a float
-    max_timescale: a float
-    Returns:
-    a Tensor of timing signals [1, length, channels]
+    :param length: int， 时间序列的长度
+    :param channels: int， 时间序列嵌入向量的长度
+    :param min_timescale: float
+    :param max_timescale: float
+    :return: 输出张量，shape = [1, length, channels]
     """
     position = tf.to_float(tf.range(length))
     num_timescales = channels // 2
@@ -458,49 +453,26 @@ def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e
 
 
 def ndim(x):
-    """Copied from keras==2.0.6
-    Returns the number of axes in a tensor, as an integer.
-
-    # Arguments
-        x: Tensor or variable.
-
-    # Returns
-        Integer (scalar), number of axes.
-
-    # Examples
-    ```python
-        >>> from keras import backend as K
-        >>> inputs = K.placeholder(shape=(2, 4, 5))
-        >>> val = np.array([[1, 2], [3, 4]])
-        >>> kvar = K.variable(value=val)
-        >>> K.ndim(inputs)
-        3
-        >>> K.ndim(kvar)
-        2
-    ```
+    """以整数形式返回张量中的轴数。
+    :param x: 输入张量x
+    :return: int，表示输入张量的轴数
     """
-    dims = x.get_shape()._dims
+    dims = x.get_shape().dims
     if dims is not None:
         return len(dims)
     return None
 
 
 def dot(x, y):
-    """Modified from keras==2.0.6
-    Multiplies 2 tensors (and/or variables) and returns a *tensor*.
-
-    When attempting to multiply a nD tensor
-    with a nD tensor, it reproduces the Theano behavior.
+    """张量内积,把x,y看作一系列维度为shape(x)[-1]==shape(y)[-2]的向量，然后计算向量内积
+    将x reshape为[-1,shape(x)[-1]], 将y reshape为[shape(y)[-2],-1],然后tf.matmul(x,y)
     (e.g. `(2, 3) * (4, 3, 5) -> (2, 4, 5)`)
-
-    # Arguments
-        x: Tensor or variable.
-        y: Tensor or variable.
-
-    # Returns
-        A tensor, dot product of `x` and `y`.
+    :param x: 输入张量x
+    :param y: 输入张量y
+    :return: 输出张量
     """
     if ndim(x) is not None and (ndim(x) > 2 or ndim(y) > 2):
+        # 存放x的shape
         x_shape = []
         for i, s in zip(x.get_shape().as_list(), tf.unstack(tf.shape(x))):
             if i is not None:
@@ -508,6 +480,7 @@ def dot(x, y):
             else:
                 x_shape.append(s)
         x_shape = tuple(x_shape)
+        # 存放y的shape
         y_shape = []
         for i, s in zip(y.get_shape().as_list(), tf.unstack(tf.shape(y))):
             if i is not None:
@@ -515,7 +488,9 @@ def dot(x, y):
             else:
                 y_shape.append(s)
         y_shape = tuple(y_shape)
+        # 每个轴的顺序
         y_permute_dim = list(range(ndim(y)))
+        # 把倒数第二个轴换到第一个轴上
         y_permute_dim = [y_permute_dim.pop(-2)] + y_permute_dim
         xt = tf.reshape(x, [-1, x_shape[-1]])
         yt = tf.reshape(tf.transpose(y, perm=y_permute_dim), [y_shape[-2], -1])
