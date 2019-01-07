@@ -526,18 +526,23 @@ def batch_dot(x, y, axes=None):
         (less the batch dimension and the dimension that was summed over).
         If the final rank is 1, we reshape it to `(batch_size, 1)`.
     """
+    # 如果axes只指定一个整型值
     if isinstance(axes, int):
         axes = (axes, axes)
     x_ndim = ndim(x)
     y_ndim = ndim(y)
+    # 如果x的轴数大于y的轴数
     if x_ndim > y_ndim:
         diff = x_ndim - y_ndim
         y = tf.reshape(y, tf.concat([tf.shape(y), [1] * (diff)], axis=0))
+    # 如果x的轴数小于y的轴数
     elif y_ndim > x_ndim:
         diff = y_ndim - x_ndim
         x = tf.reshape(x, tf.concat([tf.shape(x), [1] * (diff)], axis=0))
+    # 相等
     else:
         diff = 0
+    #  x的轴数与y的轴数都等于2
     if ndim(x) == 2 and ndim(y) == 2:
         if axes[0] == axes[1]:
             out = tf.reduce_sum(tf.multiply(x, y), axes[0])
