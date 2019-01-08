@@ -110,7 +110,7 @@ def layer_dropout(inputs, residual, dropout):
     pred = tf.random_uniform([]) < dropout
     return tf.cond(pred, lambda: residual, lambda: tf.nn.dropout(inputs, 1.0 - dropout) + residual)
 
-
+# 包含残差卷积层，残差自注意力层，残差前向网络层
 def residual_block(inputs, num_blocks, num_conv_layers, kernel_size, mask=None,
                    num_filters=128, input_projection=False, num_heads=8,
                    seq_len=None, scope="res_block", is_training=True,
@@ -136,7 +136,7 @@ def residual_block(inputs, num_blocks, num_conv_layers, kernel_size, mask=None,
                                                      bias=bias, dropout=dropout, sublayers=(sublayer, total_sublayers))
         return outputs
 
-# 卷积残差模块
+# 残差卷积模块
 def conv_block(inputs, num_conv_layers, kernel_size, num_filters,
                seq_len=None, scope="conv_block", is_training=True,
                reuse=None, bias=True, dropout=0.0, sublayers=(1, 1)):
@@ -166,7 +166,7 @@ def self_attention_block(inputs, num_filters, seq_len, mask=None, num_heads=8,
                          bias=True, dropout=0.0, sublayers=(1, 1)):
     with tf.variable_scope(scope, reuse=reuse):
         l, L = sublayers
-        # 先进行Layernorm，dropout，多头自注意力，层dropout
+        # 1、先进行Layernorm，dropout，多头自注意力，层dropout
         outputs = norm_fn(inputs, scope="layer_norm_1", reuse=reuse)
         outputs = tf.nn.dropout(outputs, 1.0 - dropout)
         outputs = multihead_attention(outputs, num_filters,
@@ -175,7 +175,7 @@ def self_attention_block(inputs, num_filters, seq_len, mask=None, num_heads=8,
         residual = layer_dropout(outputs, inputs, dropout * float(l) / L)
         l += 1
 
-        # 再进行Layernorm，dropout，两层前向网络，层droupout
+        # 2、再进行Layernorm，dropout，两层前向网络，层droupout
         outputs = norm_fn(residual, scope="layer_norm_2", reuse=reuse)
         outputs = tf.nn.dropout(outputs, 1.0 - dropout)
         #
@@ -185,7 +185,7 @@ def self_attention_block(inputs, num_filters, seq_len, mask=None, num_heads=8,
         l += 1
         return outputs, l
 
-# 多头注意力模块，input_size = [batch, wide, channel]
+# 多头注意力模块，input_size = [batch, seq_len, channel]
 def multihead_attention(queries, units, num_heads,
                         memory=None,
                         seq_len=None,
@@ -195,15 +195,34 @@ def multihead_attention(queries, units, num_heads,
                         is_training=True,
                         bias=True,
                         dropout=0.0):
+    """实现方式： 1、先对queries和memory进行通道压缩，压缩为depth
+                2、再对步骤1重复num_heads次
+                3、结合1、2即对queries和memory通道压缩为depth * num_heads = units的卷积
+    :param queries: 输入张量Q
+    :param units: int，输出通道数，num_heads的整数倍
+    :param num_heads: int，head的个数
+    :param memory: 输入张量KV
+    :param seq_len: 序列长度
+    :param scope: 命名空间名
+    :param reuse: 是否复用参数
+    :param mask:
+    :param is_training: 是否可训练
+    :param bias: 是否需要偏置
+    :param dropout: dropout比例
+    :return: 输出张量，shape = [batch, seq_len, units]
+    """
     with tf.variable_scope(scope, reuse=reuse):
-        # Self attention
+        # 自注意力
         if memory is None:
             memory = queries
 
         memory = conv(memory, 2 * units, name="memory_projection", reuse=reuse, kernel_size=1)
         query = conv(queries, units, name="query_projection", reuse=reuse, kernel_size=1)
-        # Q,K,V size = [batch, heads, length_q, depth_k]
+        # Q,K,V 原来shape = [batch, length_q, units] 相当于head==1
+        # Q,K,V 现在shape = [batch, num_heads, length_q, depth_k] 相当与head==num_heads
+        # multi-head Q、K、V
         Q = split_last_dimension(query, num_heads)
+        # memory按通道半分获得K，V
         K, V = [split_last_dimension(tensor, num_heads) for tensor in tf.split(memory, 2, axis=2)]
 
         key_depth_per_head = units // num_heads
@@ -323,13 +342,12 @@ def depthwise_separable_convolution(inputs, kernel_size, num_filters,
         outputs = tf.nn.relu(outputs)
         return outputs
 
-# 把最后一个维度进行切分
+
 def split_last_dimension(x, n):
-    """Reshape x so that the last dimension becomes two dimensions.
-    The first of these two dimensions is n.
-    :param x: a Tensor with shape [..., m]
+    """对最后一个维度进行切分，切分的第一个维度为n
+    :param x: 输入张量，shape = [..., m]
     :param n: int
-    :return: a Tensor with shape [..., n, m/n]
+    :return: 输出张量，shape = [..., n, m/n]
     """
     old_shape = x.get_shape().dims
     last = old_shape[-1]
@@ -492,8 +510,10 @@ def dot(x, y):
         y_permute_dim = list(range(ndim(y)))
         # 把倒数第二个轴换到第一个轴上
         y_permute_dim = [y_permute_dim.pop(-2)] + y_permute_dim
+        # reshape成二维矩阵
         xt = tf.reshape(x, [-1, x_shape[-1]])
         yt = tf.reshape(tf.transpose(y, perm=y_permute_dim), [y_shape[-2], -1])
+        # 矩阵乘法后进行reshape
         return tf.reshape(tf.matmul(xt, yt),
                           x_shape[:-1] + y_shape[:-2] + y_shape[-1:])
     if isinstance(x, tf.SparseTensor):
@@ -502,7 +522,7 @@ def dot(x, y):
         out = tf.matmul(x, y)
     return out
 
-
+# 相当与tf.matmul的高级版，可以指定做内积的轴
 def batch_dot(x, y, axes=None):
     """Copy from keras==2.0.6
     Batchwise dot product.
@@ -526,12 +546,12 @@ def batch_dot(x, y, axes=None):
         (less the batch dimension and the dimension that was summed over).
         If the final rank is 1, we reshape it to `(batch_size, 1)`.
     """
-    # 如果axes只指定一个整型值
+    # 如果axes只指定一个整型值，那么认为axes[0]=axes[1]
     if isinstance(axes, int):
         axes = (axes, axes)
     x_ndim = ndim(x)
     y_ndim = ndim(y)
-    # 如果x的轴数大于y的轴数
+    # 如果x,y轴数不等，就给轴数少的增加轴
     if x_ndim > y_ndim:
         diff = x_ndim - y_ndim
         y = tf.reshape(y, tf.concat([tf.shape(y), [1] * (diff)], axis=0))
@@ -548,15 +568,20 @@ def batch_dot(x, y, axes=None):
             out = tf.reduce_sum(tf.multiply(x, y), axes[0])
         else:
             out = tf.reduce_sum(tf.multiply(tf.transpose(x, [1, 0]), y), axes[1])
+    # x,y至少一个轴数大于二
     else:
+        # axes不为None
         if axes is not None:
+            # 判断指定的轴是否为最后一个轴，如果axes[0]为x的倒数第二个轴，则x需要转置，如果axes[1]为y的最后一个轴，则y需要转置
             adj_x = None if axes[0] == ndim(x) - 1 else True
             adj_y = True if axes[1] == ndim(y) - 1 else None
         else:
             adj_x = None
             adj_y = None
         out = tf.matmul(x, y, adjoint_a=adj_x, adjoint_b=adj_y)
+    # 如果x,y轴数不等
     if diff:
+        # x轴数大于y
         if x_ndim > y_ndim:
             idx = x_ndim + y_ndim - 3
         else:
@@ -571,27 +596,37 @@ def optimized_trilinear_for_attention(args, c_maxlen, q_maxlen, input_keep_prob=
                                       scope='efficient_trilinear',
                                       bias_initializer=tf.zeros_initializer(),
                                       kernel_initializer=initializer()):
+    # args参数个数不等于二则报错
     assert len(args) == 2, "just use for computing attention with two input"
+    # 分别获取两个参数的shape
+    # arg0_shape = [batch, len_c, dimension]
     arg0_shape = args[0].get_shape().as_list()
+    # arg0_shape = [batch, len_q, dimension]
     arg1_shape = args[1].get_shape().as_list()
+    # 如果两个参数轴数不为3则报错
     if len(arg0_shape) != 3 or len(arg1_shape) != 3:
-        raise ValueError("`args` must be 3 dims (batch_size, len, dimension)")
+        raise ValueError("`args` must be 3 dims (batch_size, seq_len, dimension)")
+    # 如果两个参数最后一个维度不同则报错
     if arg0_shape[2] != arg1_shape[2]:
         raise ValueError("the last dimension of `args` must equal")
     arg_size = arg0_shape[2]
     dtype = args[0].dtype
+    # 对c，q使用dropout
     droped_args = [tf.nn.dropout(arg, input_keep_prob) for arg in args]
     with tf.variable_scope(scope):
+        # [dimension, 1]
         weights4arg0 = tf.get_variable(
             "linear_kernel4arg0", [arg_size, 1],
             dtype=dtype,
             regularizer=regularizer,
             initializer=kernel_initializer)
+        # [dimension, 1]
         weights4arg1 = tf.get_variable(
             "linear_kernel4arg1", [arg_size, 1],
             dtype=dtype,
             regularizer=regularizer,
             initializer=kernel_initializer)
+        # [1, 1, dimension]
         weights4mlu = tf.get_variable(
             "linear_kernel4mul", [1, 1, arg_size],
             dtype=dtype,
@@ -602,14 +637,17 @@ def optimized_trilinear_for_attention(args, c_maxlen, q_maxlen, input_keep_prob=
             dtype=dtype,
             regularizer=regularizer,
             initializer=bias_initializer)
+        # subres0_shape = [batch, len_c, q_maxlen]
         subres0 = tf.tile(dot(droped_args[0], weights4arg0), [1, 1, q_maxlen])
+        # subres1_shape = [batch, c_maxlen, len_q]
         subres1 = tf.tile(tf.transpose(dot(droped_args[1], weights4arg1), perm=(0, 2, 1)), [1, c_maxlen, 1])
+        # subres2_shape = [bacth, len_c, len_q]
         subres2 = batch_dot(droped_args[0] * weights4mlu, tf.transpose(droped_args[1], perm=(0, 2, 1)))
         res = subres0 + subres1 + subres2
         nn_ops.bias_add(res, biases)
         return res
 
-
+# 原三次线性实现
 def trilinear(args,
               output_size=1,
               bias=True,
@@ -618,6 +656,7 @@ def trilinear(args,
               input_keep_prob=1.0,
               scope="trilinear"):
     with tf.variable_scope(scope):
+        # args = [C, Q, C*Q]
         flat_args = [flatten(arg, 1) for arg in args]
         flat_args = [tf.nn.dropout(arg, input_keep_prob) for arg in flat_args]
         flat_out = _linear(flat_args, output_size, bias, scope=scope)
@@ -635,6 +674,7 @@ def flatten(tensor, keep):
 
 
 def reconstruct(tensor, ref, keep):
+    # ref,tensor的shape
     ref_shape = ref.get_shape().as_list()
     tensor_shape = tensor.get_shape().as_list()
     ref_stop = len(ref_shape) - keep
@@ -656,18 +696,14 @@ def _linear(args,
             kernel_initializer=initializer(),
             reuse=None):
     """Linear map: sum_i(args[i] * W[i]), where W[i] is a variable.
-  Args:
-    args: a 2D Tensor or a list of 2D, batch x n, Tensors.
-    output_size: int, second dimension of W[i].
-    bias: boolean, whether to add a bias term or not.
-    bias_initializer: starting value to initialize the bias
-      (default is all zeros).
-    kernel_initializer: starting value to initialize the weight.
-  Returns:
-    A 2D Tensor with shape [batch x output_size] equal to
-    sum_i(args[i] * W[i]), where W[i]s are newly created matrices.
-  Raises:
-    ValueError: if some of the arguments has unspecified or wrong shape.
+    :param args: args是一个二维张量或者是一个二维张量的列表
+    :param output_size: int，W[i]的第二维度
+    :param bias: bool，是否添加偏置
+    :param bias_initializer: 偏置初始化函数
+    :param scope: 命名空间名
+    :param kernel_initializer: 卷积核参数初始化函数
+    :param reuse: 参数是否复用
+    :return: 二维张量，shape = [batch x output_size] = sum_i(args[i] * W[i])
   """
     if args is None or (nest.is_sequence(args) and not args):
         raise ValueError("`args` must be specified")
@@ -687,7 +723,7 @@ def _linear(args,
 
     dtype = [a.dtype for a in args][0]
 
-    # Now the computation.
+    # W[q, c, q*c]
     with tf.variable_scope(scope, reuse=reuse) as outer_scope:
         weights = tf.get_variable(
             "linear_kernel", [total_arg_size, output_size],
@@ -698,6 +734,7 @@ def _linear(args,
             res = math_ops.matmul(args[0], weights)
         else:
             res = math_ops.matmul(array_ops.concat(args, 1), weights)
+        # 是否添加偏置
         if not bias:
             return res
         with tf.variable_scope(outer_scope) as inner_scope:
@@ -709,7 +746,7 @@ def _linear(args,
                 initializer=bias_initializer)
         return nn_ops.bias_add(res, biases)
 
-
+# 统计模型参数个数
 def total_params():
     total_parameters = 0
     for variable in tf.trainable_variables():

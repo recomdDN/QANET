@@ -91,7 +91,7 @@ class Model(object):
         N, PL, QL, CL, d, dc, nh = config.batch_size if not self.demo else 1, self.c_maxlen, self.q_maxlen, config.char_limit, config.hidden, config.char_dim, config.num_heads
         # Embedding层：获取词向量和字符向量的拼接
         with tf.variable_scope("Input_Embedding_Layer"):
-            # character嵌入：
+            # # character嵌入：
             # 1、先对单词的每个字母进行word2vec
             ch_emb = tf.reshape(tf.nn.embedding_lookup(
                 self.char_mat, self.ch), [N * PL, CL, dc])
@@ -113,20 +113,25 @@ class Model(object):
             ch_emb = tf.reshape(ch_emb, [N, PL, ch_emb.shape[-1]])
             qh_emb = tf.reshape(qh_emb, [N, QL, ch_emb.shape[-1]])
 
-            # 词嵌入：从glove获取
+            # # 词嵌入：从glove获取
             c_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.c), 1.0 - self.dropout)
             q_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.q), 1.0 - self.dropout)
+
             # 拼接词向量和字符向量　
             # c_emb_size = [batch, n_c, c_emb+ch_emb]
             c_emb = tf.concat([c_emb, ch_emb], axis=2)
             # q_emb_size = [batch, n_q, c_emb + ch_emb]
             q_emb = tf.concat([q_emb, qh_emb], axis=2)
+
             # 分别通过highway网络
+            # c_emb_size = [batch, n_c, d]
             c_emb = highway(c_emb, size=d, scope="highway", dropout=self.dropout, reuse=None)
+            # c_emb_size = [batch, n_q, d]
             q_emb = highway(q_emb, size=d, scope="highway", dropout=self.dropout, reuse=True)
-        #
+
         # Stacking Embedding Encoder Block的实现：共1个encoder block，每个7个卷积层，卷积核数d=96
         with tf.variable_scope("Embedding_Encoder_Layer"):
+            # c_size = [batch, n_c, d]
             c = residual_block(c_emb,
                                num_blocks=1,
                                num_conv_layers=4,
@@ -138,6 +143,7 @@ class Model(object):
                                scope="Encoder_Residual_Block",
                                bias=False,
                                dropout=self.dropout)
+            # q_size = [batch, n_q, d]
             q = residual_block(q_emb,
                                num_blocks=1,
                                num_conv_layers=4,
@@ -156,7 +162,7 @@ class Model(object):
             # C = tf.tile(tf.expand_dims(c,2),[1,1,self.q_maxlen,1])
             # Q = tf.tile(tf.expand_dims(q,1),[1,self.c_maxlen,1,1])
             # S = trilinear([C, Q, C*Q], input_keep_prob = 1.0 - self.dropout)
-            # S_size = [batch, n_c, n_q], q_size = [batch, n_q, emb_size], c_size = [batch, n_c, emb_size]
+            # S_size = [batch, n_c, n_q], q_size = [batch, n_q, d], c_size = [batch, n_c, d]
             S = optimized_trilinear_for_attention([c, q], self.c_maxlen, self.q_maxlen,
                                                   input_keep_prob=1.0 - self.dropout)
             mask_q = tf.expand_dims(self.q_mask, 1)
@@ -165,11 +171,11 @@ class Model(object):
             mask_c = tf.expand_dims(self.c_mask, 2)
             # n_c方向进行softmax
             S_T = tf.transpose(tf.nn.softmax(mask_logits(S, mask=mask_c), dim=1), (0, 2, 1))
-            # c2q_size = [batch, nc_, emb_size]
+            # c2q_size = [batch, n_c, d]
             self.c2q = tf.matmul(S_, q)
-            # q2c_size = [batch, nc_, emb_size]
+            # q2c_size = [batch, n_c, d]
             self.q2c = tf.matmul(tf.matmul(S_, S_T), c)
-            # attention_size = [4, batch, nc_, emb_size]
+            # attention_size = [4, batch, n_c, d]
             attention_outputs = [c, self.c2q, c * self.c2q, c * self.q2c]
 
         # Stacked Model Encoder Blocks实现：共7个encoder block，每个2个卷积层，卷积核数d=96
