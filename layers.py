@@ -52,6 +52,7 @@ def noam_norm(x, epsilon=1.0, scope=None, reuse=None):
 
 def layer_norm_compute_python(x, epsilon, scale, bias):
     """Layer norm raw computation."""
+    # 按通道求均值 shape = [batch, h, w, 1]
     mean = tf.reduce_mean(x, axis=[-1], keep_dims=True)
     variance = tf.reduce_mean(tf.square(x - mean), axis=[-1], keep_dims=True)
     norm_x = (x - mean) * tf.rsqrt(variance + epsilon)
@@ -427,12 +428,10 @@ def add_timing_signal_1d(x, min_timescale=1.0, max_timescale=1.0e4):
     generate the two sinusoidal signals sin(timestep/timescale) and
     cos(timestep/timescale).  All of these sinusoids are concatenated in
     the channels dimension.
-    Args:
-    x: a Tensor with shape [batch, length, channels]
-    min_timescale: a float
-    max_timescale: a float
-    Returns:
-    a Tensor the same shape as x.
+    :param x: 输入张量，shape = [batch, length, channels]
+    :param min_timescale: float
+    :param max_timescale: float
+    :return: 输出张量，shape = [batch, length, channels]
     """
     length = tf.shape(x)[1]
     channels = tf.shape(x)[2]
