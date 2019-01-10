@@ -12,34 +12,38 @@ class Model(object):
 
             self.global_step = tf.get_variable('global_step', shape=[], dtype=tf.int32,
                                                initializer=tf.constant_initializer(0), trainable=False)
-            self.dropout = tf.placeholder_with_default(0.0, (), name="dropout")
+            self.dropout = tf.placeholder_with_default(0.0, shape=(), name="dropout")
             if self.demo:
+                # test_para_limit，test_ques_limit测试paragraph和question的最大字数，char_limit单词的最大字母数
                 self.c = tf.placeholder(tf.int32, [None, config.test_para_limit], "context")
                 self.q = tf.placeholder(tf.int32, [None, config.test_ques_limit], "question")
                 self.ch = tf.placeholder(tf.int32, [None, config.test_para_limit, config.char_limit], "context_char")
                 self.qh = tf.placeholder(tf.int32, [None, config.test_ques_limit, config.char_limit], "question_char")
                 self.y1 = tf.placeholder(tf.int32, [None, config.test_para_limit], "answer_index1")
                 self.y2 = tf.placeholder(tf.int32, [None, config.test_para_limit], "answer_index2")
+            # train，test
             else:
                 self.c, self.q, self.ch, self.qh, self.y1, self.y2, self.qa_id = batch.get_next()
 
             # self.word_unk = tf.get_variable("word_unk", shape = [config.glove_dim], initializer=initializer())
-            # word embeddings and character embeddings
+            # word embeddings矩阵 和 character embeddings矩阵
             self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(
                 word_mat, dtype=tf.float32), trainable=False)
             self.char_mat = tf.get_variable(
                 "char_mat", initializer=tf.constant(char_mat, dtype=tf.float32))
 
-            # context mask and question mask
+            # context mask 和 question mask
             self.c_mask = tf.cast(self.c, tf.bool)
             self.q_mask = tf.cast(self.q, tf.bool)
+            # 每个paragraph和question的长度
             self.c_len = tf.reduce_sum(tf.cast(self.c_mask, tf.int32), axis=1)
             self.q_len = tf.reduce_sum(tf.cast(self.q_mask, tf.int32), axis=1)
 
             if opt:
-                # num_batch and character limit
+                # N：batch_size
+                # CL：最大字母数
                 N, CL = config.batch_size if not self.demo else 1, config.char_limit
-                # 最大长度
+                # 所有paragraph和question的最大长度
                 self.c_maxlen = tf.reduce_max(self.c_len)
                 self.q_maxlen = tf.reduce_max(self.q_len)
 
@@ -60,7 +64,9 @@ class Model(object):
             self.qh_len = tf.reshape(tf.reduce_sum(
                 tf.cast(tf.cast(self.qh, tf.bool), tf.int32), axis=2), [-1])
 
+            # 定义网络结构
             self.forward()
+            # 统计参数个数
             total_params()
 
             if trainable:
@@ -69,6 +75,7 @@ class Model(object):
                                      0.001 / tf.log(999.) * tf.log(tf.cast(self.global_step, tf.float32) + 1))
                 # 优化器
                 self.opt = tf.train.AdamOptimizer(learning_rate=self.lr, beta1=0.8, beta2=0.999, epsilon=1e-7)
+                # 计算梯度
                 grads = self.opt.compute_gradients(self.loss)
                 gradients, variables = zip(*grads)
                 # 梯度截断
@@ -77,13 +84,14 @@ class Model(object):
                 self.train_op = self.opt.apply_gradients(
                     zip(capped_grads, variables), global_step=self.global_step)
 
+    # 定义模型结构
     def forward(self):
         config = self.config
         '''
         N: batch_size
-        PL: passage长度
-        QL: question长度
-        CL: 单词最大字符长度
+        PL: passage最大长度
+        QL: question最大长度
+        CL: 单词最大字母长度
         d: 输出通道数
         dc: 字母的嵌入维度
         nh: 自注意力的头数
@@ -101,15 +109,17 @@ class Model(object):
             qh_emb = tf.nn.dropout(qh_emb, 1.0 - 0.5 * self.dropout)
 
             # 2、将单词对应的word2vec矩阵通过conv编码成向量
-            # 卷积
+            # 卷积 ch_emb_shape = [N * PL, CL-5+1, d], qh_emb_shape = [N * QL, CL-5+1, d]
             ch_emb = conv(ch_emb, d,
                           bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=None)
             qh_emb = conv(qh_emb, d,
                           bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=True)
+
             # max_time_pooling
+            # ch_emb_shape = [N * PL, d], qh_emb_shape = [N * QL, d]
             ch_emb = tf.reduce_max(ch_emb, axis=1)
             qh_emb = tf.reduce_max(qh_emb, axis=1)
-
+            # ch_emb_shape = [N, PL, d], qh_emb_shape = [N, QL, d]
             ch_emb = tf.reshape(ch_emb, [N, PL, ch_emb.shape[-1]])
             qh_emb = tf.reshape(qh_emb, [N, QL, ch_emb.shape[-1]])
 
@@ -181,7 +191,9 @@ class Model(object):
         # Stacked Model Encoder Blocks实现：共7个encoder block，每个2个卷积层，卷积核数d=96
         with tf.variable_scope("Model_Encoder_Layer"):
             # c, self.c2q, c * self.c2q, c * self.q2c 按照通道维度进行合并
+            # input_shape = [batch, n_c, 4d]
             inputs = tf.concat(attention_outputs, axis=-1)
+            # self.enc[i]_shape = [batch, n_c, d]
             self.enc = [conv(inputs, d, name="input_projection")]
             # 3个Stacked Model Encoder Blocks
             for i in range(3):
@@ -205,9 +217,11 @@ class Model(object):
         # 输出层实现：
         with tf.variable_scope("Output_Layer"):
             # 合并Stacked Model Encoder Blocks的第一个和第二个输出，并和并通道
+            # start_logits_shape = [batch, n_c, 1]
             start_logits = tf.squeeze(
                 conv(tf.concat([self.enc[1], self.enc[2]], axis=-1), 1, bias=False, name="start_pointer"), -1)
             # 合并Stacked Model Encoder Blocks的第一个和第三个输出，并和并通道
+            # end_logits_shape = [batch, n_c, 1]
             end_logits = tf.squeeze(
                 conv(tf.concat([self.enc[1], self.enc[3]], axis=-1), 1, bias=False, name="end_pointer"), -1)
 
@@ -216,10 +230,14 @@ class Model(object):
 
             logits1, logits2 = [l for l in self.logits]
 
+            # outer_shape = [bacth, n_c, n_c]
             outer = tf.matmul(tf.expand_dims(tf.nn.softmax(logits1), axis=2),
                               tf.expand_dims(tf.nn.softmax(logits2), axis=1))
+            # 保留行坐标<纵坐标，且行坐标+纵坐标<=ans_limit的数据，其余置0
             outer = tf.matrix_band_part(outer, 0, config.ans_limit)
+            # 最大值的行坐标，代表起始位置
             self.yp1 = tf.argmax(tf.reduce_max(outer, axis=2), axis=1)
+            # 最大值的列坐标，代表结束位置
             self.yp2 = tf.argmax(tf.reduce_max(outer, axis=1), axis=1)
             losses = tf.nn.softmax_cross_entropy_with_logits(
                 logits=logits1, labels=self.y1)
@@ -236,6 +254,7 @@ class Model(object):
         if config.decay is not None:
             self.var_ema = tf.train.ExponentialMovingAverage(config.decay)
             ema_op = self.var_ema.apply(tf.trainable_variables())
+            # control_dependencies传入的操作是先于with后的操作
             with tf.control_dependencies([ema_op]):
                 self.loss = tf.identity(self.loss)
 

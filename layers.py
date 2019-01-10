@@ -414,25 +414,6 @@ def combine_last_two_dimensions(x):
 
 
 def add_timing_signal_1d(x, min_timescale=1.0, max_timescale=1.0e4):
-    """Adds a bunch of sinusoids of different frequencies to a Tensor.
-    Each channel of the input Tensor is incremented by a sinusoid of a different
-    frequency and phase.
-    This allows attention to learn to use absolute and relative positions.
-    Timing signals should be added to some precursors of both the query and the
-    memory inputs to attention.
-    The use of relative position is possible because sin(x+y) and cos(x+y) can be
-    experessed in terms of y, sin(x) and cos(x).
-    In particular, we use a geometric sequence of timescales starting with
-    min_timescale and ending with max_timescale.  The number of different
-    timescales is equal to channels / 2. For each timescale, we
-    generate the two sinusoidal signals sin(timestep/timescale) and
-    cos(timestep/timescale).  All of these sinusoids are concatenated in
-    the channels dimension.
-    :param x: 输入张量，shape = [batch, length, channels]
-    :param min_timescale: float
-    :param max_timescale: float
-    :return: 输出张量，shape = [batch, length, channels]
-    """
     length = tf.shape(x)[1]
     channels = tf.shape(x)[2]
     signal = get_timing_signal_1d(length, channels, min_timescale, max_timescale)
@@ -440,21 +421,17 @@ def add_timing_signal_1d(x, min_timescale=1.0, max_timescale=1.0e4):
 
 # 获取位置信息
 def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e4):
-    """获取一堆不同频率的正弦曲线。
-    输入张量的每个通道增加一个不同频率和相位的正弦曲线。
-    这允许注意力学习到使用绝对和相对的位置。
-    在输入到attention前，应该先把位置信息添加到query和memory中。
-    使用相对位置成为可能，由于sin(x+y)和cos(x+y)可以分别由sin(x)和cos(x)表示。
-    特别地，我们使用从min_timescale开始并以max_timescale结束的时间尺度的几何序列。
-    对于不同时间尺度的数值为通道数/2。
-    对于每个时间尺度，我们生成两个正弦信号(timestep/timescale)和cos(timestep/timescale)。
-    并且这些正弦信号在通道维度进行拼接。
+    """PE(pos,2i) = sin(pos/10000^(2i/channel))
+       PE(pos,2i+1) = cos(pos/10000^(2i/channel))
+       也就是说给定pos，我们可以把他编码成一个channel的向量，位置编码的每一个维度
+       对应正弦曲线，波长构成了从2pi到10000*2pi的等比数列。
     :param length: int， 时间序列的长度
     :param channels: int， 时间序列嵌入向量的长度
     :param min_timescale: float
     :param max_timescale: float
     :return: 输出张量，shape = [1, length, channels]
     """
+    # 将position先编号，再把编号转换成为一个向量
     position = tf.to_float(tf.range(length))
     num_timescales = channels // 2
     log_timescale_increment = (
@@ -462,8 +439,10 @@ def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e
             (tf.to_float(num_timescales) - 1))
     inv_timescales = min_timescale * tf.exp(
         tf.to_float(tf.range(num_timescales)) * -log_timescale_increment)
+    # PE matrix
     scaled_time = tf.expand_dims(position, 1) * tf.expand_dims(inv_timescales, 0)
     signal = tf.concat([tf.sin(scaled_time), tf.cos(scaled_time)], axis=1)
+    # 如果channels为基数，那么signal最后一列为全0
     signal = tf.pad(signal, [[0, 0], [0, tf.mod(channels, 2)]])
     signal = tf.reshape(signal, [1, length, channels])
     return signal
