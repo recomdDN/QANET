@@ -32,15 +32,20 @@ def train(config):
     parser = get_record_parser(config)
     graph = tf.Graph()
     with graph.as_default() as g:
+        # tf.data.TFRecordDataset类型
         train_dataset = get_batch_dataset(config.train_record_file, parser, config)
         dev_dataset = get_dataset(config.dev_record_file, parser, config)
-        handle = tf.placeholder(tf.string, shape=[])
-        iterator = tf.data.Iterator.from_string_handle(
-            handle, train_dataset.output_types, train_dataset.output_shapes)
+
+        # 单次迭代器
         train_iterator = train_dataset.make_one_shot_iterator()
         dev_iterator = dev_dataset.make_one_shot_iterator()
 
-        model = Model(config, iterator, word_mat, char_mat, graph = g)
+        # 生成可传tf.placeholder的迭代器
+        handle = tf.placeholder(tf.string, shape=[])
+        iterator = tf.data.Iterator.from_string_handle(
+            handle, train_dataset.output_types, train_dataset.output_shapes)
+
+        model = Model(config, iterator, word_mat, char_mat, graph=g)
 
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True

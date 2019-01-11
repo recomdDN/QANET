@@ -43,8 +43,9 @@ def get_record_parser(config, is_test=False):
 
 def get_batch_dataset(record_file, parser, config):
     num_threads = tf.constant(config.num_threads, dtype=tf.int32)
+    # shuffle是打乱数据，并取出buffer_size个，repeat表示无限期重复数据
     dataset = tf.data.TFRecordDataset(record_file).map(
-        parser, num_parallel_calls=num_threads).shuffle(config.capacity).repeat()
+        parser, num_parallel_calls=num_threads).shuffle(buffer_size=config.capacity).repeat()
     if config.is_bucket:
         buckets = [tf.constant(num) for num in range(*config.bucket_range)]
 
