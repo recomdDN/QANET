@@ -36,14 +36,18 @@ def convert_idx(text, tokens):
         current += len(token)
     return spans
 
-#
+
 def process_file(filename, data_type, word_counter, char_counter):
     """
     :param filename: 文件名
     :param data_type: 数据类型
     :param word_counter: 单词计数器
     :param char_counter: 字母计数器
-    :return:
+    :return: example = [{"context_tokens": context单词列表, "context_chars": context_chars字母矩阵,
+                        "ques_tokens": ques_tokens单词列表, "ques_chars": ques_chars字母矩阵,
+                        "y1s": y1s, "y2s": y2s, "id": total}, {...}]
+            eval_example = {'id_no':{"context": context, "spans": [[首字母位置，末字母位置],...],
+                            "answers": answer字符串, "uuid": qa["id"]}}
     """
     print("Generating {} examples...".format(data_type))
     examples = []
@@ -231,7 +235,17 @@ def convert_to_features(config, data, word2idx_dict, char2idx_dict):
     return context_idxs, context_char_idxs, ques_idxs, ques_char_idxs
 
 def build_features(config, examples, data_type, out_file, word2idx_dict, char2idx_dict, is_test=False):
-
+    """
+    将数据存储为tf.tf.data.TFRecordDataset数据格式
+    :param config: config
+    :param examples:
+    :param data_type:
+    :param out_file:
+    :param word2idx_dict:
+    :param char2idx_dict:
+    :param is_test:
+    :return:
+    """
     para_limit = config.test_para_limit if is_test else config.para_limit
     ques_limit = config.test_ques_limit if is_test else config.ques_limit
     ans_limit = 100 if is_test else config.ans_limit
@@ -249,6 +263,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
     total = 0
     total_ = 0
     meta = {}
+    # 逐个样本写入tfrecord，tfrecord中每条记录都是一个tf.train.Example
     for example in tqdm(examples):
         total_ += 1
 
@@ -280,7 +295,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
             if char in char2idx_dict:
                 return char2idx_dict[char]
             return 1
-
+        # word-->index, char-->index转换
         for i, token in enumerate(example["context_tokens"]):
             context_idxs[i] = _get_word(token)
 
@@ -301,7 +316,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
 
         start, end = example["y1s"][-1], example["y2s"][-1]
         y1[start], y2[end] = 1.0, 1.0
-
+        # 创建tfrecord
         record = tf.train.Example(features=tf.train.Features(feature={
                                   "context_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[context_idxs.tostring()])),
                                   "ques_idxs": tf.train.Feature(bytes_list=tf.train.BytesList(value=[ques_idxs.tostring()])),
