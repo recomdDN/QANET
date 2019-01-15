@@ -100,7 +100,7 @@ class Model(object):
         # Embedding层：获取词向量和字符向量的拼接
         with tf.variable_scope("Input_Embedding_Layer"):
             # # character嵌入：
-            # 1、先对单词的每个字母进行word2vec
+            # 1、先对单词的每个字母进行char2vec
             ch_emb = tf.reshape(tf.nn.embedding_lookup(
                 self.char_mat, self.ch), [N * PL, CL, dc])
             qh_emb = tf.reshape(tf.nn.embedding_lookup(

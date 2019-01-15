@@ -238,20 +238,20 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
     """
     将数据存储为tf.tf.data.TFRecordDataset数据格式
     :param config: config
-    :param examples:
+    :param examples: dict list
     :param data_type:
     :param out_file:
     :param word2idx_dict:
     :param char2idx_dict:
     :param is_test:
-    :return:
+    :return: meta, 样本数量
     """
     para_limit = config.test_para_limit if is_test else config.para_limit
     ques_limit = config.test_ques_limit if is_test else config.ques_limit
     ans_limit = 100 if is_test else config.ans_limit
     char_limit = config.char_limit
 
-    # 用于判断样本是否出现context过长，question过长，answer起始值小于结束值
+    # 用于判断样本是否出现context过长，question过长，answer过长
     def filter_func(example, is_test=False):
         return len(example["context_tokens"]) > para_limit or \
                len(example["ques_tokens"]) > ques_limit or \
@@ -267,7 +267,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
     for example in tqdm(examples):
         total_ += 1
 
-        # 过滤有问题数据
+        # 过长的数据直接抛弃，而不是截断使用
         if filter_func(example, is_test):
             continue
 
@@ -295,7 +295,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
             if char in char2idx_dict:
                 return char2idx_dict[char]
             return 1
-        # word-->index, char-->index转换
+        # word-->index, char-->index逐个替换，未替换的仍以然是0
         for i, token in enumerate(example["context_tokens"]):
             context_idxs[i] = _get_word(token)
 
@@ -313,7 +313,7 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
                 if j == char_limit:
                     break
                 ques_char_idxs[i, j] = _get_char(char)
-
+        # 把多个答案中的最后一个作为ground_truth
         start, end = example["y1s"][-1], example["y2s"][-1]
         y1[start], y2[end] = 1.0, 1.0
         # 创建tfrecord

@@ -91,12 +91,16 @@ flags.DEFINE_integer("glove_word_size", int(2.2e6), "Corpus size for Glove")
 flags.DEFINE_integer("glove_dim", 300, "Embedding dimension for Glove")
 flags.DEFINE_integer("char_dim", 64, "Embedding dimension for char")
 
+# paragraph, question, answer长度分别超过400, 50, 30的不作为训练样本
 flags.DEFINE_integer("para_limit", 400, "Limit length for paragraph")
 flags.DEFINE_integer("ques_limit", 50, "Limit length for question")
 flags.DEFINE_integer("ans_limit", 30, "Limit length for answers")
+# paragraph, question, answer长度分别超过400, 50, 30的不作为测试样本
 flags.DEFINE_integer("test_para_limit", 1000, "Limit length for paragraph in test file")
 flags.DEFINE_integer("test_ques_limit", 100, "Limit length for question in test file")
+# 每个单词最多包含字母数
 flags.DEFINE_integer("char_limit", 16, "Limit length for character")
+# 统计次数少于-1的word和char忽略
 flags.DEFINE_integer("word_count_limit", -1, "Min count for word")
 flags.DEFINE_integer("char_count_limit", -1, "Min count for char")
 
@@ -107,23 +111,32 @@ flags.DEFINE_list("bucket_range", [40, 401, 40], "the range of bucket")
 
 flags.DEFINE_integer("batch_size", 32, "Batch size")
 flags.DEFINE_integer("num_steps", 60000, "Number of steps")
+# 每隔1000轮保存和评估模型
 flags.DEFINE_integer("checkpoint", 1000, "checkpoint to save and evaluate the model")
+# 每隔100轮记录训练误差
 flags.DEFINE_integer("period", 100, "period to save batch loss")
+# 评估模型使用的batch数量
 flags.DEFINE_integer("val_num_batches", 150, "Number of batches to evaluate the model")
+# dropout概率
 flags.DEFINE_float("dropout", 0.1, "Dropout prob across the layers")
+# 梯度裁剪
 flags.DEFINE_float("grad_clip", 5.0, "Global Norm gradient clipping rate")
+# 学习率
 flags.DEFINE_float("learning_rate", 0.001, "Learning rate")
 flags.DEFINE_float("decay", 0.9999, "Exponential moving average decay")
 flags.DEFINE_float("l2_norm", 3e-7, "L2 norm scale")
+# 隐藏层数量或输出通道数
 flags.DEFINE_integer("hidden", 96, "Hidden size")
+# multi-attention的head数
 flags.DEFINE_integer("num_heads", 1, "Number of heads in self attention")
+# 大于early_stop * checkpoint轮不提升就停止训练
 flags.DEFINE_integer("early_stop", 10, "Checkpoints for early stop")
 
-# Extensions (Uncomment corresponding code in download.sh to download the required data)
+# 使用download.sh来下载
 glove_char_file = os.path.join(home, "data", "glove", "glove.840B.300d-char.txt")
 flags.DEFINE_string("glove_char_file", glove_char_file, "Glove character embedding source file")
 flags.DEFINE_boolean("pretrained_char", False, "Whether to use pretrained character embedding")
-
+# wiki词向量
 fasttext_file = os.path.join(home, "data", "fasttext", "wiki-news-300d-1M.vec")
 flags.DEFINE_string("fasttext_file", fasttext_file, "Fasttext word embedding source file")
 flags.DEFINE_boolean("fasttext", False, "Whether to use fasttext")
